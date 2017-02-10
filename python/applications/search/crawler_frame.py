@@ -2,9 +2,10 @@ import logging
 from datamodel.search.datamodel import ProducedLink, OneUnProcessedGroup, robot_manager
 from spacetime_local.IApplication import IApplication
 from spacetime_local.declarations import Producer, GetterSetter, Getter
-#from lxml import html,etree
+from lxml import html,etree
 import re, os
 from time import time
+from StringIO import StringIO
 
 try:
     # For python 2
@@ -28,10 +29,10 @@ class CrawlerFrame(IApplication):
     def __init__(self, frame):
         self.starttime = time()
         # Set app_id <student_id1>_<student_id2>...
-        self.app_id = ""
+        self.app_id = "55802153_82423652"
         # Set user agent string to IR W17 UnderGrad <student_id1>, <student_id2> ...
         # If Graduate studetn, change the UnderGrad part to Grad.
-        self.UserAgentString = None
+        self.UserAgentString = "IR W17 Grad 55802153, 82423652"
 		
         self.frame = frame
         assert(self.UserAgentString != None)
@@ -92,7 +93,38 @@ def extract_next_links(rawDatas):
 
     Suggested library: lxml
     '''
+
+    for url_object in rawDatas:
+        if url_object.http_code%100 <= 3:
+            url_object.out_links = extract_links_from_content(url_object)
+            url_object.bad_url = False
+        else:
+            url_object.bad_url = True
+        outputLinks.extend(url_object.out_links)
+
     return outputLinks
+
+
+def extract_links_from_content(url_object):
+    ans = set()
+    if url_object != None:
+        tree = etree.parse(StringIO(url_object.content))
+        raw_links = tree.xpath('/html/body//tbody/tr/td/a[@title]/@href')
+        if url_object.is_redirected:
+            url_prefix = url_object.final_url
+        else:
+            url_prefix = url_object.url
+        for link in raw_links:
+            parsed = urlparse(link)
+            if link[0] == "/":
+                ans.add(parsed.netloc + link)
+            elif parsed.netloc != "":
+                ans.add(url_prefix + link)
+            else:
+                ans.add(url_prefix)
+
+    return ans
+
 
 def is_valid(url):
     '''
@@ -104,8 +136,11 @@ def is_valid(url):
     parsed = urlparse(url)
     if parsed.scheme not in set(["http", "https"]):
         return False
+
+    if not parsed.scheme or not parsed.netloc:
+        return False
     try:
-        return ".ics.uci.edu" in parsed.hostname \
+        return not is_trap(url) and ".ics.uci.edu" in parsed.hostname \
             and not re.match(".*\.(css|js|bmp|gif|jpe?g|ico" + "|png|tiff?|mid|mp2|mp3|mp4"\
             + "|wav|avi|mov|mpeg|ram|m4v|mkv|ogg|ogv|pdf" \
             + "|ps|eps|tex|ppt|pptx|doc|docx|xls|xlsx|names|data|dat|exe|bz2|tar|msi|bin|7z|psd|dmg|iso|epub|dll|cnf|tgz|sha1" \
@@ -114,3 +149,6 @@ def is_valid(url):
 
     except TypeError:
         print ("TypeError for ", parsed)
+
+def is_trap(url):
+    return False
