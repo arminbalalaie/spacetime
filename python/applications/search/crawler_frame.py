@@ -1,4 +1,7 @@
 import logging
+
+from w3lib.url import canonicalize_url
+
 from datamodel.search.datamodel import ProducedLink, OneUnProcessedGroup, robot_manager
 from spacetime_local.IApplication import IApplication
 from spacetime_local.declarations import Producer, GetterSetter, Getter
@@ -6,6 +9,7 @@ from lxml import html,etree
 import re, os
 from time import time
 from StringIO import StringIO
+import atexit
 
 try:
     # For python 2
@@ -83,6 +87,7 @@ STUB FUNCTIONS TO BE FILLED OUT BY THE STUDENT.
 '''
 def extract_next_links(rawDatas):
     outputLinks = list()
+    global crawler_analytics
     '''
     rawDatas is a list of objs -> [raw_content_obj1, raw_content_obj2, ....]
     Each obj is of type UrlResponse  declared at L28-42 datamodel/search/datamodel.py
@@ -95,10 +100,25 @@ def extract_next_links(rawDatas):
     '''
 
     for url_object in rawDatas:
-        if url_object.http_code%100 <= 3:
+        if url_object.is_redirected:
+            url_prefix = url_object.final_url
+        else:
+            url_prefix = url_object.url
+
+        # add subdomain analytics
+        crawler_analytics.add_url(url_prefix)
+
+        # add invalid URLs analytics
+        # the URL is not valid if it does not have either scheme or netloc
+        parsed = urlparse(url_prefix)
+        if parsed.scheme not in ["http", "https"] or parsed.netloc is "":
+            crawler_analytics.add_invalid_url(url_prefix)
+
+        if url_object.http_code/100 <= 3:
             url_object.out_links = extract_links_from_content(url_object)
             url_object.bad_url = False
         else:
+            print url_object.http_code
             url_object.bad_url = True
         outputLinks.extend(url_object.out_links)
 
@@ -106,25 +126,53 @@ def extract_next_links(rawDatas):
 
 
 def extract_links_from_content(url_object):
+    global crawler_history
+    global crawler_analytics
     ans = set()
-    if url_object != None:
-        tree = etree.parse(StringIO(url_object.content))
-        raw_links = tree.xpath('/html/body//tbody/tr/td/a[@title]/@href')
-        if url_object.is_redirected:
-            url_prefix = url_object.final_url
-        else:
-            url_prefix = url_object.url
-        for link in raw_links:
-            parsed = urlparse(link)
-            if link[0] == "/":
-                ans.add(parsed.netloc + link)
-            elif parsed.netloc != "":
-                ans.add(url_prefix + link)
+    try:
+        if url_object is not None:
+            # Find final URL
+            if url_object.is_redirected:
+                url_prefix = url_object.final_url
             else:
-                ans.add(url_prefix)
+                url_prefix = url_object.url
 
+            crawler_history.add(url_prefix)
+
+            # Parsing HTML content to extract links
+            tree = html.fromstring(url_object.content)
+            raw_links = tree.xpath('//a/@href')
+
+            default_scheme = urlparse(url_prefix).scheme
+            crawler_analytics.add_url_sub_url_count(url_prefix, len(raw_links))
+
+            for link in raw_links:
+                if len(link) < 2: continue
+                # Make absolute links
+                parsed = urlparse(link)
+                if parsed.scheme not in ["","http", "https"]:
+                    continue
+                if link[0] is "/":
+                    if link[1] is "/": # starts with //
+                        absolute_url = default_scheme + ":" + link
+                    else: # starts with /
+                        absolute_url = default_scheme + "://" + urlparse(url_prefix).netloc + link
+                elif parsed.netloc is "":
+                    rslash_pos = url_prefix.rfind("/")
+                    if rslash_pos is -1:
+                        absolute_url = url_prefix + "/" + link
+                    else:
+                        absolute_url = url_prefix[:rslash_pos+1] + link
+                else:
+                    absolute_url = link
+
+                ans.add(absolute_url)
+    except:
+        print "Parsing has been failed for " + url_prefix
+        url_object.bad_url = True
+
+    print ans
     return ans
-
 
 def is_valid(url):
     '''
@@ -134,21 +182,106 @@ def is_valid(url):
     This is a great place to filter out crawler traps.
     '''
     parsed = urlparse(url)
-    if parsed.scheme not in set(["http", "https"]):
+    if parsed.scheme not in set(["http", "https"]) or not parsed.netloc:
         return False
 
-    if not parsed.scheme or not parsed.netloc:
+    # Check if the URL is a trap
+    if not crawler_history.is_url_in_frequency_limit(url):
+        print "crawling trap! >> " + url
         return False
+
     try:
-        return not is_trap(url) and ".ics.uci.edu" in parsed.hostname \
+        return ".ics.uci.edu" in parsed.hostname \
             and not re.match(".*\.(css|js|bmp|gif|jpe?g|ico" + "|png|tiff?|mid|mp2|mp3|mp4"\
             + "|wav|avi|mov|mpeg|ram|m4v|mkv|ogg|ogv|pdf" \
             + "|ps|eps|tex|ppt|pptx|doc|docx|xls|xlsx|names|data|dat|exe|bz2|tar|msi|bin|7z|psd|dmg|iso|epub|dll|cnf|tgz|sha1" \
-            + "|thmx|mso|arff|rtf|jar|csv"\
+            + "|thmx|mso|arff|rtf|jar|csv|txt"\
             + "|rm|smil|wmv|swf|wma|zip|rar|gz)$", parsed.path.lower())
 
     except TypeError:
         print ("TypeError for ", parsed)
 
-def is_trap(url):
-    return False
+
+class CrawlerHistory:
+    crawler_history = []
+    crawler_history_occurrence = {}
+
+    def __init__(self, size, max_frequency):
+        self.crawler_size = size
+        self.max_frequency = max_frequency
+
+    def add(self, url):
+        url = self.clean_up_url(url)
+        # Add url to queue
+        self.crawler_history.append(url)
+        # Update url occurrence frequency
+        if not self.crawler_history_occurrence.has_key(url):
+            self.crawler_history_occurrence[url] = 0
+        self.crawler_history_occurrence[url] += 1
+
+        # Remove the last item from queue and frequency dict
+        if len(self.crawler_history) > self.crawler_size:
+            self.crawler_history_occurrence[self.crawler_history[0]] -= 1
+            if self.crawler_history_occurrence[self.crawler_history[0]] == 0:
+                self.crawler_history_occurrence.pop(self.crawler_history[0], None)
+            self.crawler_history.pop(0)
+
+    def __contains__(self, url):
+        return self.crawler_history_occurrence.has_key(self.clean_up_url(url))
+
+    def is_url_in_frequency_limit(self, url):
+        return self.max_frequency >= self.crawler_history_occurrence.get(self.clean_up_url(url), 0)
+
+    def clean_up_url(self, url):
+        # Remove Query String
+        url = url[:url.rfind("?")]
+        # Remove .. from URL
+        pass
+        return canonicalize_url(url).lower()
+
+
+class CrawlingAnalytics:
+    def __init__(self):
+        self.subdomains = dict()
+        self.invalid_urls = set()
+        self.max_out_url_page = None
+
+    def add_url(self, url):
+        parsed_url = urlparse(url)
+        if parsed_url.netloc != "":
+            if not self.subdomains.has_key(parsed_url.netloc):
+                self.subdomains[parsed_url.netloc] = 0
+            self.subdomains[parsed_url.netloc] += 1
+
+    # urls with same canonicalized urls are different
+    def add_invalid_url(self, url):
+        self.invalid_urls.add(url)
+
+    # returns the first page with maximum out link
+    def add_url_sub_url_count(self, url, sub_urls_count):
+        if self.max_out_url_page is None:
+            self.max_out_url_page = (url, sub_urls_count)
+        else:
+            if sub_urls_count > self.max_out_url_page[1]:
+                self.max_out_url_page = (url, sub_urls_count)
+
+def report_analytics():
+    global crawler_analytics
+
+    print "Subdomains Statistics"
+    print "==================================="
+    for subdomain,frequency in crawler_analytics.subdomains.items():
+        print subdomain,frequency
+
+    print "Invalid Links Statistics"
+    print "==================================="
+    print len(crawler_analytics.invalid_urls) + "links"
+
+    print "Max Out Link Statistics"
+    print "==================================="
+    print crawler_analytics.max_out_url_page[0], ":", crawler_analytics.max_out_url_page[1]
+atexit.register(report_analytics)
+
+# Initialize crawling history
+crawler_history = CrawlerHistory(100,10)
+crawler_analytics = CrawlingAnalytics()
