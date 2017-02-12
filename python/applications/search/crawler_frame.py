@@ -237,7 +237,7 @@ class CrawlerHistory:
         url = url[:url.rfind("?")]
         # Remove .. from URL
         pass
-        return canonicalize_url(url).lower()
+        return canonicalize_url(url).lower()[:128]
 
 
 class CrawlingAnalytics:
@@ -275,11 +275,11 @@ def report_analytics():
 
     print "Invalid Links Statistics"
     print "==================================="
-    print len(crawler_analytics.invalid_urls) + "links"
+    print str(len(crawler_analytics.invalid_urls)) + "links"
 
     print "Max Out Link Statistics"
     print "==================================="
-    print crawler_analytics.max_out_url_page[0], ":", crawler_analytics.max_out_url_page[1]
+    print crawler_analytics.max_out_url_page[0] +  " : " +  str(crawler_analytics.max_out_url_page[1])
 atexit.register(report_analytics)
 
 # Initialize crawling history
