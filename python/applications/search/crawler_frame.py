@@ -119,8 +119,11 @@ def extract_next_links(rawDatas):
             url_object.bad_url = False
         else:
             print url_object.http_code
+            crawler_history.add(url_prefix)
             url_object.bad_url = True
         outputLinks.extend(url_object.out_links)
+
+    report_analytics()
 
     return outputLinks
 
@@ -166,7 +169,7 @@ def extract_links_from_content(url_object):
                 else:
                     absolute_url = link
 
-                ans.add(absolute_url)
+                ans.add(clean_up_dots_in_url(absolute_url))
     except:
         print "Parsing has been failed for " + url_prefix
         url_object.bad_url = True
@@ -232,28 +235,28 @@ class CrawlerHistory:
     def is_url_in_frequency_limit(self, url):
         return self.max_frequency >= self.crawler_history_occurrence.get(self.clean_up_url(url), 0)
 
-    # reference for this code: http://stackoverflow.com/questions/27950432/python-urljoin-not-removing-superflous-dots/40536710#40536710
-    def clean_up_dots_in_url(self,url):
-        parts = list(urlsplit(url))
-        segments = parts[2].split('/')
-        segments = [segment + '/' for segment in segments[:-1]] + [segments[-1]]
-        resolved = []
-        for segment in segments:
-            if segment in ('../', '..'):
-                if resolved[1:]:
-                    resolved.pop()
-            elif segment not in ('./', '.'):
-                resolved.append(segment)
-        parts[2] = ''.join(resolved)
-        return urlunsplit(parts)
-
     def clean_up_url(self, url):
         # Remove Query String
         url = url[:url.rfind("?")]
         # Remove .. from URL
-        url = self.clean_up_dots_in_url(url)
+        url = clean_up_dots_in_url(url)
         return canonicalize_url(url).lower()[:128]
 
+
+# reference for this code: http://stackoverflow.com/questions/27950432/python-urljoin-not-removing-superflous-dots/40536710#40536710
+def clean_up_dots_in_url(url):
+    parts = list(urlsplit(url))
+    segments = parts[2].split('/')
+    segments = [segment + '/' for segment in segments[:-1]] + [segments[-1]]
+    resolved = []
+    for segment in segments:
+        if segment in ('../', '..'):
+            if resolved[1:]:
+                resolved.pop()
+        elif segment not in ('./', '.'):
+            resolved.append(segment)
+    parts[2] = ''.join(resolved)
+    return urlunsplit(parts)
 
 class CrawlingAnalytics:
     def __init__(self):
@@ -280,23 +283,38 @@ class CrawlingAnalytics:
             if sub_urls_count > self.max_out_url_page[1]:
                 self.max_out_url_page = (url, sub_urls_count)
 
+    def __unicode__(self):
+        ret = "===================================\n"
+        ret += "Subdomains Statistics\n"
+        ret += "===================================\n"
+        for subdomain, frequency in self.subdomains.items():
+            ret += subdomain + " " + str(frequency) + "\n"
+        ret += "\n===================================\n"
+        ret += "Invalid Links Statistics\n"
+        ret += "===================================\n"
+        ret += str(len(self.invalid_urls)) + " links\n"
+
+        ret += "\n===================================\n"
+        ret += "Max Out Link Statistics\n"
+        ret += "===================================\n"
+
+        if self.max_out_url_page:
+            ret += self.max_out_url_page[0] + " : " + str(self.max_out_url_page[1]) + "\n"
+
+        return ret
+
+    def __str__(self):
+        return self.__unicode__()
+
 def report_analytics():
     global crawler_analytics
+    f = open("analytics.txt","w")
+    f.write(str(crawler_analytics))
+    f.close()
 
-    print "Subdomains Statistics"
-    print "==================================="
-    for subdomain,frequency in crawler_analytics.subdomains.items():
-        print subdomain,frequency
 
-    print "Invalid Links Statistics"
-    print "==================================="
-    print str(len(crawler_analytics.invalid_urls)) + "links"
-
-    print "Max Out Link Statistics"
-    print "==================================="
-    print crawler_analytics.max_out_url_page[0] +  " : " +  str(crawler_analytics.max_out_url_page[1])
 atexit.register(report_analytics)
 
 # Initialize crawling history
-crawler_history = CrawlerHistory(100,10)
+crawler_history = CrawlerHistory(500,5)
 crawler_analytics = CrawlingAnalytics()
