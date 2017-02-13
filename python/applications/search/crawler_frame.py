@@ -13,7 +13,7 @@ import atexit
 
 try:
     # For python 2
-    from urlparse import urlparse, parse_qs
+    from urlparse import urlparse, parse_qs, urlsplit, urlunsplit
 except ImportError:
     # For python 3
     from urllib.parse import urlparse, parse_qs
@@ -232,11 +232,26 @@ class CrawlerHistory:
     def is_url_in_frequency_limit(self, url):
         return self.max_frequency >= self.crawler_history_occurrence.get(self.clean_up_url(url), 0)
 
+    # reference for this code: http://stackoverflow.com/questions/27950432/python-urljoin-not-removing-superflous-dots/40536710#40536710
+    def clean_up_dots_in_url(self,url):
+        parts = list(urlsplit(url))
+        segments = parts[2].split('/')
+        segments = [segment + '/' for segment in segments[:-1]] + [segments[-1]]
+        resolved = []
+        for segment in segments:
+            if segment in ('../', '..'):
+                if resolved[1:]:
+                    resolved.pop()
+            elif segment not in ('./', '.'):
+                resolved.append(segment)
+        parts[2] = ''.join(resolved)
+        return urlunsplit(parts)
+
     def clean_up_url(self, url):
         # Remove Query String
         url = url[:url.rfind("?")]
         # Remove .. from URL
-        pass
+        url = self.clean_up_dots_in_url(url)
         return canonicalize_url(url).lower()[:128]
 
 
