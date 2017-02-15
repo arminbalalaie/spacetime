@@ -77,6 +77,10 @@ def save_count(urls):
             surls.write(("\n".join(urls) + "\n").encode("utf-8"))
 
 def process_url_group(group, useragentstr):
+    global crawler_analytics
+    for l in group.link_group:
+        if not is_valid(l.full_url):
+            crawler_analytics.add_invalid_url(l.full_url)
     rawDatas, successfull_urls = group.download(useragentstr, is_valid)
     save_count(successfull_urls)
     return extract_next_links(rawDatas), rawDatas
@@ -268,8 +272,8 @@ class CrawlingAnalytics:
         parsed_url = urlparse(url)
         if parsed_url.netloc != "":
             if not self.subdomains.has_key(parsed_url.netloc):
-                self.subdomains[parsed_url.netloc] = 0
-            self.subdomains[parsed_url.netloc] += 1
+                self.subdomains[parsed_url.netloc] = set()
+            self.subdomains[parsed_url.netloc].add(self.clean_up_url(url))
 
     # urls with same canonicalized urls are different
     def add_invalid_url(self, url):
@@ -283,12 +287,18 @@ class CrawlingAnalytics:
             if sub_urls_count > self.max_out_url_page[1]:
                 self.max_out_url_page = (url, sub_urls_count)
 
+    def clean_up_url(self, url):
+        # Remove .. from URL
+        url = clean_up_dots_in_url(url)
+        # return canonicalize_url(url).lower()[:128]
+        return (url).lower()
+
     def __unicode__(self):
         ret = "===================================\n"
         ret += "Subdomains Statistics\n"
         ret += "===================================\n"
         for subdomain, frequency in self.subdomains.items():
-            ret += subdomain + " " + str(frequency) + "\n"
+            ret += subdomain + " " + str(len(frequency)) + "\n"
         ret += "\n===================================\n"
         ret += "Invalid Links Statistics\n"
         ret += "===================================\n"
