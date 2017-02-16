@@ -2,6 +2,7 @@ import logging
 
 from applications.search.crawler_analytics import CrawlingAnalytics
 from applications.search.crawler_history import CrawlerHistory
+from applications.search.url_common import clean_up_dots_in_url
 from datamodel.search.datamodel import ProducedLink, OneUnProcessedGroup, robot_manager
 from spacetime_local.IApplication import IApplication
 from spacetime_local.declarations import Producer, GetterSetter, Getter
@@ -93,6 +94,7 @@ STUB FUNCTIONS TO BE FILLED OUT BY THE STUDENT.
 def extract_next_links(rawDatas):
     output_links = list()
     global crawler_analytics
+    global crawler_history
 
     for url_object in rawDatas:
         if url_object.is_redirected:
@@ -102,29 +104,25 @@ def extract_next_links(rawDatas):
 
         # add subdomain analytics
         crawler_analytics.add_url(url_prefix)
-
-        # add invalid URLs analytics
-        # the URL is not valid if it does not have either scheme or netloc
-        parsed = urlparse(url_prefix)
-        if parsed.scheme not in ["http", "https"] or parsed.netloc is "":
-            crawler_analytics.add_invalid_url(url_prefix)
+        # add URL to crawler history
+        crawler_history.add(url_prefix)
 
         if url_object.http_code/100 <= 3:
             url_object.out_links = extract_links_from_content(url_object)
             url_object.bad_url = False
         else:
             print url_object.http_code
-            crawler_history.add(url_prefix)
             url_object.bad_url = True
+
         output_links.extend(url_object.out_links)
 
+    # Write down the analytics report
     report_analytics()
 
     return output_links
 
 
 def extract_links_from_content(url_object):
-    global crawler_history
     global crawler_analytics
     ans = set()
     try:
@@ -135,14 +133,14 @@ def extract_links_from_content(url_object):
             else:
                 url_prefix = url_object.url
 
-            crawler_history.add(url_prefix)
-
             # Parsing HTML content to extract links
             tree = html.fromstring(url_object.content)
             raw_links = tree.xpath('//a/@href')
 
             default_scheme = urlparse(url_prefix).scheme
-            crawler_analytics.add_url_sub_url_count(url_prefix, len(raw_links))
+
+            # Update max out link statistics
+            crawler_analytics.add_url_out_link_count(url_prefix, len(raw_links))
 
             for link in raw_links:
                 if len(link) < 2: continue
@@ -193,22 +191,6 @@ def is_valid(url):
 
     except TypeError:
         print ("TypeError for ", parsed)
-
-
-# reference for this code: http://stackoverflow.com/questions/27950432/python-urljoin-not-removing-superflous-dots/40536710#40536710
-def clean_up_dots_in_url(url):
-    parts = list(urlsplit(url))
-    segments = parts[2].split('/')
-    segments = [segment + '/' for segment in segments[:-1]] + [segments[-1]]
-    resolved = []
-    for segment in segments:
-        if segment in ('../', '..'):
-            if resolved[1:]:
-                resolved.pop()
-        elif segment not in ('./', '.'):
-            resolved.append(segment)
-    parts[2] = ''.join(resolved)
-    return urlunsplit(parts)
 
 
 def report_analytics():

@@ -1,6 +1,6 @@
 from w3lib.url import canonicalize_url
 
-from applications.search.crawler_frame import clean_up_dots_in_url
+from applications.search.url_common import clean_up_dots_in_url
 
 
 class CrawlerHistory:
