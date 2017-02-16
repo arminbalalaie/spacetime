@@ -39,7 +39,7 @@ class CrawlingAnalytics:
             with open(self.report_dir + "max_out_link.txt") as f:
                 data = f.readline()
                 if data:
-                    self.max_out_link_page[0], self.max_out_link_page[1] = data.split(",")
+                    self.max_out_link_page = tuple(data.split(","))
 
     # urls with same canonicalized urls are different
     def add_url(self, url):
