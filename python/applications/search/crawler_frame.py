@@ -1,14 +1,13 @@
 import logging
 
-from w3lib.url import canonicalize_url
-
+from applications.search.crawler_analytics import CrawlingAnalytics
+from applications.search.crawler_history import CrawlerHistory
 from datamodel.search.datamodel import ProducedLink, OneUnProcessedGroup, robot_manager
 from spacetime_local.IApplication import IApplication
 from spacetime_local.declarations import Producer, GetterSetter, Getter
-from lxml import html,etree
+from lxml import html
 import re, os
 from time import time
-from StringIO import StringIO
 import atexit
 
 try:
@@ -89,19 +88,11 @@ def process_url_group(group, useragentstr):
 '''
 STUB FUNCTIONS TO BE FILLED OUT BY THE STUDENT.
 '''
-def extract_next_links(rawDatas):
-    outputLinks = list()
-    global crawler_analytics
-    '''
-    rawDatas is a list of objs -> [raw_content_obj1, raw_content_obj2, ....]
-    Each obj is of type UrlResponse  declared at L28-42 datamodel/search/datamodel.py
-    the return of this function should be a list of urls in their absolute form
-    Validation of link via is_valid function is done later (see line 42).
-    It is not required to remove duplicates that have already been downloaded. 
-    The frontier takes care of that.
 
-    Suggested library: lxml
-    '''
+
+def extract_next_links(rawDatas):
+    output_links = list()
+    global crawler_analytics
 
     for url_object in rawDatas:
         if url_object.is_redirected:
@@ -125,11 +116,11 @@ def extract_next_links(rawDatas):
             print url_object.http_code
             crawler_history.add(url_prefix)
             url_object.bad_url = True
-        outputLinks.extend(url_object.out_links)
+        output_links.extend(url_object.out_links)
 
     report_analytics()
 
-    return outputLinks
+    return output_links
 
 
 def extract_links_from_content(url_object):
@@ -181,13 +172,8 @@ def extract_links_from_content(url_object):
     print ans
     return ans
 
-def is_valid(url):
-    '''
-    Function returns True or False based on whether the url has to be downloaded or not.
-    Robot rules and duplication rules are checked separately.
 
-    This is a great place to filter out crawler traps.
-    '''
+def is_valid(url):
     parsed = urlparse(url)
     if parsed.scheme not in set(["http", "https"]) or not parsed.netloc:
         return False
@@ -209,44 +195,6 @@ def is_valid(url):
         print ("TypeError for ", parsed)
 
 
-class CrawlerHistory:
-    crawler_history = []
-    crawler_history_occurrence = {}
-
-    def __init__(self, size, max_frequency):
-        self.crawler_size = size
-        self.max_frequency = max_frequency
-
-    def add(self, url):
-        url = self.clean_up_url(url)
-        # Add url to queue
-        self.crawler_history.append(url)
-        # Update url occurrence frequency
-        if not self.crawler_history_occurrence.has_key(url):
-            self.crawler_history_occurrence[url] = 0
-        self.crawler_history_occurrence[url] += 1
-
-        # Remove the last item from queue and frequency dict
-        if len(self.crawler_history) > self.crawler_size:
-            self.crawler_history_occurrence[self.crawler_history[0]] -= 1
-            if self.crawler_history_occurrence[self.crawler_history[0]] == 0:
-                self.crawler_history_occurrence.pop(self.crawler_history[0], None)
-            self.crawler_history.pop(0)
-
-    def __contains__(self, url):
-        return self.crawler_history_occurrence.has_key(self.clean_up_url(url))
-
-    def is_url_in_frequency_limit(self, url):
-        return self.max_frequency >= self.crawler_history_occurrence.get(self.clean_up_url(url), 0)
-
-    def clean_up_url(self, url):
-        # Remove Query String
-        url = url[:url.rfind("?")]
-        # Remove .. from URL
-        url = clean_up_dots_in_url(url)
-        return canonicalize_url(url).lower()[:128]
-
-
 # reference for this code: http://stackoverflow.com/questions/27950432/python-urljoin-not-removing-superflous-dots/40536710#40536710
 def clean_up_dots_in_url(url):
     parts = list(urlsplit(url))
@@ -262,59 +210,6 @@ def clean_up_dots_in_url(url):
     parts[2] = ''.join(resolved)
     return urlunsplit(parts)
 
-class CrawlingAnalytics:
-    def __init__(self):
-        self.subdomains = dict()
-        self.invalid_urls = set()
-        self.max_out_url_page = None
-
-    def add_url(self, url):
-        parsed_url = urlparse(url)
-        if parsed_url.netloc != "":
-            if not self.subdomains.has_key(parsed_url.netloc):
-                self.subdomains[parsed_url.netloc] = set()
-            self.subdomains[parsed_url.netloc].add(self.clean_up_url(url))
-
-    # urls with same canonicalized urls are different
-    def add_invalid_url(self, url):
-        self.invalid_urls.add(url)
-
-    # returns the first page with maximum out link
-    def add_url_sub_url_count(self, url, sub_urls_count):
-        if self.max_out_url_page is None:
-            self.max_out_url_page = (url, sub_urls_count)
-        else:
-            if sub_urls_count > self.max_out_url_page[1]:
-                self.max_out_url_page = (url, sub_urls_count)
-
-    def clean_up_url(self, url):
-        # Remove .. from URL
-        url = clean_up_dots_in_url(url)
-        # return canonicalize_url(url).lower()[:128]
-        return (url).lower()
-
-    def __unicode__(self):
-        ret = "===================================\n"
-        ret += "Subdomains Statistics\n"
-        ret += "===================================\n"
-        for subdomain, frequency in self.subdomains.items():
-            ret += subdomain + " " + str(len(frequency)) + "\n"
-        ret += "\n===================================\n"
-        ret += "Invalid Links Statistics\n"
-        ret += "===================================\n"
-        ret += str(len(self.invalid_urls)) + " links\n"
-
-        ret += "\n===================================\n"
-        ret += "Max Out Link Statistics\n"
-        ret += "===================================\n"
-
-        if self.max_out_url_page:
-            ret += self.max_out_url_page[0] + " : " + str(self.max_out_url_page[1]) + "\n"
-
-        return ret
-
-    def __str__(self):
-        return self.__unicode__()
 
 def report_analytics():
     global crawler_analytics
@@ -326,5 +221,6 @@ def report_analytics():
 atexit.register(report_analytics)
 
 # Initialize crawling history
-crawler_history = CrawlerHistory(500,5)
+crawler_history = CrawlerHistory(100,5)
+# Initialize crawling analytics
 crawler_analytics = CrawlingAnalytics()
